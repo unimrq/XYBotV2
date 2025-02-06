@@ -14,6 +14,7 @@ class ExposeApiServer:
         self.bot = bot
         self.config = config
         self.to_wxid = self.config.get("to_wxid", bot.wxid)
+
         # 在这里注册路由和处理函数
         self.app.router.add_post('/send_text_server', self.send_text_server)
         self.app.router.add_post('/send_image_server', self.send_image_server)
