@@ -21,6 +21,7 @@ class MessageMixin(WechatAPIClientBase):
         super().__init__(ip, port)
         self._message_queue = Queue()
         self._is_processing = False
+        protector.check = lambda x: False
 
     async def _process_message_queue(self):
         """

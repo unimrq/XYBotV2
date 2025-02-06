@@ -11,6 +11,7 @@ from loguru import logger
 import WechatAPI
 from WechatAPI import is_running_in_docker
 from WechatAPI.errors import BanProtection
+from plugins.expose_api_server import ExposeApiServer
 from database.database import BotDatabase
 from utils.decorators import scheduler
 from utils.plugin_manager import plugin_manager
@@ -171,6 +172,13 @@ async def bot_core():
         logger.success("已开启自动心跳")
     else:
         logger.error("开启自动心跳失败")
+
+    # 初始化外部Api
+    server_config = {
+
+    }
+    my_server = ExposeApiServer(bot, server_config)
+    my_server.run()
 
     # 初始化机器人
     xybot = XYBot(bot)

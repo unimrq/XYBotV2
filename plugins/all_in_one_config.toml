@@ -342,3 +342,8 @@ count = 3
 
 [GoodMorning]
 enable = true
+
+[MessageForward]
+enable = true
+command = ["sv"]
+base_url = 'http://127.0.0.1:7000/'
