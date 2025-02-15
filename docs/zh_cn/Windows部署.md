@@ -2,7 +2,7 @@
 
 ## 1. 🔧 环境准备
 
-- 安装 Python 3.11 (必须是3.11版本): https://www.python.org/downloads/release/python-31111/
+- 安装 Python 3.11 (必须是3.11版本): https://www.python.org/downloads/release/python-3119/
     - 在安装过程中勾选 "Add Python to PATH" 选项
     - 或者手动添加：
         1. 右键点击 "此电脑" -> "属性" -> "高级系统设置" -> "环境变量"
@@ -26,24 +26,16 @@
         ffmpeg -version
         ```
 
-- 安装 Redis for Windows:
-    - 从 [Redis-Windows](https://github.com/redis-windows/redis-windows/releases) 下载最新版本 (目前是7.4.2)
-    - 下载 `Redis-7.4.2-Windows-x64-msys2-with-Service.zip` (推荐,使用MSYS2编译的服务版本)
-    - 解压到合适的目录(如 `C:\Redis`)
-    - 以管理员身份运行 PowerShell 或命令提示符,执行:
+- 安装 Redis:
+    - 从 [Redis](https://github.com/tporadowski/redis/releases/tag/v5.0.14.1) 下载最新版本 (目前是7.4.2)
+    - 下载并解压 `Redis-x64-5.0.14.1.zip`
+    - 在命令行执行:
       ```bash
-      # 进入Redis目录
-      cd C:\Redis
-      
-      # 安装Redis服务
-      redis-server.exe --service-install redis.windows.conf
+      # 进入目录
+      cd Redis-x64-5.0.14.1
       
       # 启动Redis服务
-      redis-server.exe --service-start
-      
-      # 验证Redis是否正常运行
-      redis-cli.exe ping
-      # 如果返回PONG则表示Redis已成功运行
+      start redis-server.exe
       ```
 
 ## 2. ⬇️ 下载项目
@@ -101,3 +93,16 @@ python main.py
     ```
 
 > 如果是修改插件配置则可使用热加载、热卸载、热重载指令，不用重启机器人。
+
+## ❓ 常见问题
+
+1. 与网络相关的报错
+
+- 检查网络连接，是否能ping通微信服务器
+- 尝试关闭代理软件，尝试重启电脑
+- 尝试重启XYBot和Redis
+- 如是Docker部署，检查Docker容器网络是否能连接到微信服务器和Dragonfly数据库
+
+2. `正在运行`相关的报错
+
+- 将占用9000端口的进程强制结束
