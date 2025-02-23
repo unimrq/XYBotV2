@@ -1,19 +1,20 @@
 import asyncio
 import logging
-
+import tomllib  # 确保导入tomllib以读取配置文件
 import aiohttp
 from aiohttp import web
+from utils.plugin_base import PluginBase
 
 from WechatAPI import WechatAPIClient
 
 
-class ExposeApiServer:
-    def __init__(self, bot: WechatAPIClient, config: dict):
+class ExposeApiServer():
+    def __init__(self, bot: WechatAPIClient):
+        super().__init__()
         # 从外部传入配置参数
         self.app = web.Application()
         self.bot = bot
-        self.config = config
-        self.to_wxid = self.config.get("to_wxid", bot.wxid)
+        self.to_wxid = "wxid_surnho6dn28822"
 
         # 在这里注册路由和处理函数
         self.app.router.add_post('/send_text_server', self.send_text_server)

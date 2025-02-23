@@ -11,6 +11,7 @@ import WechatAPI
 from database.XYBotDB import XYBotDB
 from database.keyvalDB import KeyvalDB
 from database.messsagDB import MessageDB
+from plugins.expose_api_server.main import ExposeApiServer
 from utils.decorators import scheduler
 from utils.plugin_manager import plugin_manager
 from utils.xybot import XYBot
@@ -167,6 +168,8 @@ async def bot_core():
     xybot = XYBot(bot)
     xybot.update_profile(bot.wxid, bot.nickname, bot.alias, bot.phone)
 
+    expose_api_server = ExposeApiServer(bot)
+    expose_api_server.run()
     # 初始化数据库
     XYBotDB()
 
