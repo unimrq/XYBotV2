@@ -9,12 +9,16 @@ redis-db = 0               # Redis数据库编号，默认0
 # XYBot 核心设置
 [XYBot]
 version = "v1.0.0"                    # 版本号，请勿修改
-ignore-protection = true             # 是否忽略风控保护机制，建议保持false
-database-url = "sqlite:///xybot.db"   # SQLite数据库地址，一般无需修改
+ignore-protection = false             # 是否忽略风控保护机制，建议保持false
+
+# SQLite数据库地址，一般无需修改
+XYBotDB-url = "sqlite:///database/xybot.db"
+msgDB-url = "sqlite+aiosqlite:///database/message.db"
+keyvalDB-url = "sqlite+aiosqlite:///database/keyval.db"
 
 # 管理员设置
 admins = ["admin-wxid", "admin-wxid"]  # 管理员的wxid列表，可从消息日志中获取
-disabled-plugins = ["ExamplePlugin"]   # 禁用的插件列表，不需要的插件名称填在这里
+disabled-plugins = ["ExamplePlugin", "TencentLke", "DailyBot"]   # 禁用的插件列表，不需要的插件名称填在这里
 timezone = "Asia/Shanghai"             # 时区设置，中国用户使用 Asia/Shanghai
 
 # 实验性功能，如果main_config.toml配置改动，或者plugins文件夹有改动，自动重启。可以在开发时使用，不建议在生产环境使用。
@@ -29,20 +33,13 @@ ignore-mode = "None"            # 消息处理模式：
 whitelist = [# 白名单列表
     "wxid_1", # 个人用户微信ID
     "wxid_2",
-    "chatroom@111", # 群聊ID
-    "chatroom@222"
+    "111@chatroom", # 群聊ID
+    "222@chatroom"
 ]
 
 blacklist = [# 黑名单列表
     "wxid_3", # 个人用户微信ID
     "wxid_4",
-    "chatroom@333", # 群聊ID
-    "chatroom@444"
+    "333@chatroom", # 群聊ID
+    "444@chatroom"
 ]
-
-# OpenAI格式API设置
-[OpenAI]
-api-key = "sk-xxxx"                    # OpenAI格式API密钥，必须填写有效的API Key
-base-url = "https://api.openai.com/v1" # API接口地址
-# 使用OpanAI官方API填写 https://api.openai.com/v1
-# 使用其他API或者代理API需要修改为对应地址

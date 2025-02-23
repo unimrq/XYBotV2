@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y \
     redis-server \
     && rm -rf /var/lib/apt/lists/*
 
+# 复制 Redis 配置
+COPY redis.conf /etc/redis/redis.conf
+
 # 复制依赖文件
 COPY requirements.txt .
 

@@ -3,29 +3,17 @@ import json
 import os
 import time
 import tomllib
-import traceback
 from pathlib import Path
 
 from loguru import logger
 
 import WechatAPI
-from WechatAPI import is_running_in_docker
-from WechatAPI.errors import BanProtection
-from plugins.expose_api_server import ExposeApiServer
-from database.database import BotDatabase
+from database.XYBotDB import XYBotDB
+from database.keyvalDB import KeyvalDB
+from database.messsagDB import MessageDB
 from utils.decorators import scheduler
 from utils.plugin_manager import plugin_manager
 from utils.xybot import XYBot
-
-
-async def handle_message(xybot, msg):
-    """处理单条消息"""
-    try:
-        await xybot.process_message(msg)
-    except BanProtection:
-        logger.warning("登录新设备后4小时内请不要操作以避免风控")
-    except Exception:
-        logger.error(traceback.format_exc())
 
 
 async def bot_core():
@@ -42,22 +30,18 @@ async def bot_core():
     # 启动WechatAPI服务
     server = WechatAPI.WechatAPIServer()
     api_config = main_config.get("WechatAPIServer", {})
-    redis_host = os.getenv("REDIS_HOST", api_config.get("redis-host"))
-    logger.debug("最终使用的 Redis 主机地址: {}", redis_host)
+    redis_host = api_config.get("redis-host", "127.0.0.1")
+    redis_port = api_config.get("redis-port", 6379)
+    logger.debug("Redis 主机地址: {}:{}", redis_host, redis_port)
     server.start(port=api_config.get("port", 9000),
                  mode=api_config.get("mode", "release"),
                  redis_host=redis_host,
-                 redis_port=api_config.get("redis-port", 6379),
+                 redis_port=redis_port,
                  redis_password=api_config.get("redis-password", ""),
                  redis_db=api_config.get("redis-db", 0))
 
     # 实例化WechatAPI客户端
-    if is_running_in_docker():  # 傻逼DNS
-        ip = "localhost"
-    else:
-        ip = "127.0.0.1"
-
-    bot = WechatAPI.WechatAPIClient(ip, api_config.get("port", 9000))
+    bot = WechatAPI.WechatAPIClient("127.0.0.1", api_config.get("port", 9000))
     bot.ignore_protect = main_config.get("XYBot", {}).get("ignore-protection", False)
 
     # 等待WechatAPI服务启动
@@ -72,7 +56,7 @@ async def bot_core():
         return
 
     if not await bot.check_database():
-        logger.error("Redis或Dragonfly连接失败，请检查Redis或Dragonfly是否在运行中，Redis或Dragonfly的配置")
+        logger.error("Redis连接失败，请检查Redis是否在运行中，Redis的配置")
         return
 
     logger.success("WechatAPI服务已启动")
@@ -173,23 +157,24 @@ async def bot_core():
             logger.success("已开启自动心跳")
         else:
             logger.warning("开启自动心跳失败")
+    except ValueError:
+        logger.warning("自动心跳已在运行")
     except Exception as e:
         if "在运行" not in e:
-            logger.warning("自动心跳启动失败")
-
-    # 初始化外部Api
-    server_config = {
-
-    }
-    my_server = ExposeApiServer(bot, server_config)
-    my_server.run()
+            logger.warning("自动心跳已在运行")
 
     # 初始化机器人
     xybot = XYBot(bot)
     xybot.update_profile(bot.wxid, bot.nickname, bot.alias, bot.phone)
 
     # 初始化数据库
-    BotDatabase()
+    XYBotDB()
+
+    message_db = MessageDB()
+    await message_db.initialize()
+
+    keyval_db = KeyvalDB()
+    await keyval_db.initialize()
 
     # 启动调度器
     scheduler.start()
@@ -201,14 +186,19 @@ async def bot_core():
 
     # ========== 开始接受消息 ========== #
 
-    # 先接受10秒的消息，之前的消息有堆积
+    # 先接受堆积消息
     logger.info("处理堆积消息中")
-    now = time.time()
-    while time.time() - now < 10:
+    count = 0
+    while True:
         data = await bot.sync_message()
         data = data.get("AddMsgs")
         if not data:
-            break
+            if count > 2:
+                break
+            else:
+                count += 1
+                continue
+
         logger.debug("接受到 {} 条消息", len(data))
         await asyncio.sleep(1)
     logger.success("处理堆积消息完毕")
@@ -224,9 +214,9 @@ async def bot_core():
             await asyncio.sleep(5)
             continue
 
-        data = data.get("AddMsgs", None)
+        data = data.get("AddMsgs")
         if data:
             for message in data:
-                asyncio.create_task(handle_message(xybot, message))
-            while time.time() - now < 1:
-                pass
+                asyncio.create_task(xybot.process_message(message))
+        while time.time() - now < 0.5:
+            pass

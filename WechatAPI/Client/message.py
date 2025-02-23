@@ -1,14 +1,17 @@
 import asyncio
 import base64
+import os
 from asyncio import Future
 from asyncio import Queue, sleep
 from io import BytesIO
+from pathlib import Path
+from typing import Union
 
 import aiohttp
-import moviepy as mp
 import pysilk
 from loguru import logger
 from pydub import AudioSegment
+from pymediainfo import MediaInfo
 
 from .base import *
 from .protect import protector
@@ -78,7 +81,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "ClientMsgId": client_msg_id, "CreateTime": create_time,
@@ -95,13 +98,13 @@ class MessageMixin(WechatAPIClientBase):
             else:
                 self.error_handler(json_resp)
 
-    async def send_text_message(self, wxid: str, content: str, at: list[str] = None) -> tuple[int, int, int]:
+    async def send_text_message(self, wxid: str, content: str, at: Union[list, str] = "") -> tuple[int, int, int]:
         """发送文本消息。
 
         Args:
             wxid (str): 接收人wxid
             content (str): 消息内容
-            at (list[str], optional): 要@的用户列表. Defaults to None.
+            at (list, str, optional): 要@的用户
 
         Returns:
             tuple[int, int, int]: 返回(ClientMsgid, CreateTime, NewMsgId)
@@ -120,11 +123,16 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
-        if at is None:
-            at = []
-        at_str = ",".join(at)
+        if isinstance(at, str):
+            at_str = at
+        elif isinstance(at, list):
+            if at is None:
+                at = []
+            at_str = ",".join(at)
+        else:
+            raise ValueError("Argument 'at' should be str or list")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Content": content, "Type": 1, "At": at_str}
@@ -138,13 +146,12 @@ class MessageMixin(WechatAPIClientBase):
             else:
                 self.error_handler(json_resp)
 
-    async def send_image_message(self, wxid: str, image_path: str = "", image_base64: str = "") -> tuple[int, int, int]:
+    async def send_image_message(self, wxid: str, image: Union[str, bytes, os.PathLike]) -> tuple[int, int, int]:
         """发送图片消息。
 
         Args:
             wxid (str): 接收人wxid
-            image_path (str, optional): 图片路径，与image_base64二选一. Defaults to "".
-            image_base64 (str, optional): 图片base64编码，与image_path二选一. Defaults to "".
+            image (str, byte, os.PathLike): 图片，支持base64字符串，图片byte，图片路径
 
         Returns:
             tuple[int, int, int]: 返回(ClientImgId, CreateTime, NewMsgId)
@@ -155,24 +162,27 @@ class MessageMixin(WechatAPIClientBase):
             ValueError: image_path和image_base64都为空或都不为空时
             根据error_handler处理错误
         """
-        return await self._queue_message(self._send_image_message, wxid, image_path, image_base64)
+        return await self._queue_message(self._send_image_message, wxid, image)
 
-    async def _send_image_message(self, wxid: str, image_path: str = "", image_base64: str = "") -> tuple[
+    async def _send_image_message(self, wxid: str, image: Union[str, bytes, os.PathLike]) -> tuple[
         int, int, int]:
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
-        if bool(image_path) == bool(image_base64):
-            raise ValueError("Please provide either image_path or image_base64")
-
-        if image_path:
-            with open(image_path, 'rb') as f:
-                image_base64 = base64.b64encode(f.read()).decode()
+        if isinstance(image, str):
+            pass
+        elif isinstance(image, bytes):
+            image = base64.b64encode(image).decode()
+        elif isinstance(image, os.PathLike):
+            with open(image, 'rb') as f:
+                image = base64.b64encode(f.read()).decode()
+        else:
+            raise ValueError("Argument 'image' can only be str, bytes, or os.PathLike")
 
         async with aiohttp.ClientSession() as session:
-            json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": image_base64}
+            json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": image}
             response = await session.post(f'http://{self.ip}:{self.port}/SendImageMsg', json=json_param)
             json_resp = await response.json()
 
@@ -184,81 +194,82 @@ class MessageMixin(WechatAPIClientBase):
             else:
                 self.error_handler(json_resp)
 
-    async def send_video_message(self, wxid: str, video_base64: str = "", image_base64: str = "", video_path: str = "",
-                                 image_path: str = "") -> tuple[int, int]:
-        """发送视频消息。
+    async def send_video_message(self, wxid: str, video: Union[str, bytes, os.PathLike],
+                                 image: [str, bytes, os.PathLike] = None):
+        """发送视频消息。不推荐使用，上传速度很慢300KB/s。如要使用，可压缩视频，或者发送链接卡片而不是视频。
 
-        Args:
-            wxid (str): 接收人wxid
-            video_base64 (str, optional): 视频base64编码，与video_path二选一. Defaults to "".
-            image_base64 (str, optional): 视频封面图片base64编码，与image_path二选一. Defaults to "".
-            video_path (str, optional): 视频文件路径，与video_base64二选一. Defaults to "".
-            image_path (str, optional): 视频封面图片路径，与image_base64二选一. Defaults to "".
+                Args:
+                    wxid (str): 接收人wxid
+                    video (str, bytes, os.PathLike): 视频 接受base64字符串，字节，文件路径
+                    image (str, bytes, os.PathLike): 视频封面图片 接受base64字符串，字节，文件路径
 
-        Returns:
-            tuple[int, int]: 返回(ClientMsgid, NewMsgId)
+                Returns:
+                    tuple[int, int]: 返回(ClientMsgid, NewMsgId)
 
-        Raises:
-            UserLoggedOut: 未登录时调用
-            BanProtection: 登录新设备后4小时内操作
-            ValueError: 视频或图片参数都为空或都不为空时
-            根据error_handler处理错误
-        """
-        return await self._queue_message(self._send_video_message, wxid, video_base64, image_base64, video_path,
-                                         image_path)
-
-    async def _send_video_message(self, wxid: str, video_base64: str = "", image_base64: str = "", video_path: str = "",
-                                  image_path: str = "") -> tuple[int, int]:
-        if not self.wxid:
-            raise UserLoggedOut("请先登录")
-        elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
-
-        if bool(video_path) == bool(video_base64):
-            raise ValueError("Please provide either video_path or video_base64")
-        if bool(image_path) == bool(image_base64):
-            raise ValueError("Please provide either image_path or image_base64")
-
-        # get video base64, and get duration of video, 1000unit = 1 second
-        if video_path:
-            with open(video_path, "rb") as video_file:
-                video_base64 = base64.b64encode(video_file.read()).decode()
-            video = mp.VideoFileClip(video_path)
-            duration = int(video.duration * 1000)
-        elif video_base64:
-            video = mp.VideoFileClip(BytesIO(base64.b64decode(video_base64)))
-            duration = int(video.duration * 1000)
+                Raises:
+                    UserLoggedOut: 未登录时调用
+                    BanProtection: 登录新设备后4小时内操作
+                    ValueError: 视频或图片参数都为空或都不为空时
+                    根据error_handler处理错误
+                """
+        if not image:
+            image = Path(os.path.join(Path(__file__).resolve().parent, "fallback.png"))
+        # get video base64 and duration
+        if isinstance(video, str):
+            vid_base64 = video
+            video = base64.b64decode(video)
+            file_len = len(video)
+            media_info = MediaInfo.parse(BytesIO(video))
+        elif isinstance(video, bytes):
+            vid_base64 = base64.b64encode(video).decode()
+            file_len = len(video)
+            media_info = MediaInfo.parse(BytesIO(video))
+        elif isinstance(video, os.PathLike):
+            with open(video, "rb") as f:
+                file_len = len(f.read())
+                vid_base64 = base64.b64encode(f.read()).decode()
+            media_info = MediaInfo.parse(video)
         else:
-            raise ValueError("Please provide either video_path or video_base64")
+            raise ValueError("video should be str, bytes, or path")
+        duration = media_info.tracks[0].duration
 
         # get image base64
-        if image_path:
-            with open(image_path, 'rb') as f:
+        if isinstance(image, str):
+            image_base64 = image
+        elif isinstance(image, bytes):
+            image_base64 = base64.b64encode(image).decode()
+        elif isinstance(image, os.PathLike):
+            with open(image, "rb") as f:
                 image_base64 = base64.b64encode(f.read()).decode()
+        else:
+            raise ValueError("image should be str, bytes, or path")
+
+        # 打印预估时间，300KB/s
+        predict_time = int(file_len / 1024 / 300)
+        logger.info("开始发送视频: 对方wxid:{} 视频base64略 图片base64略 预计耗时:{}秒", wxid, predict_time)
 
         async with aiohttp.ClientSession() as session:
-            json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": video_base64, "ImageBase64": image_base64,
+            json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Base64": vid_base64, "ImageBase64": image_base64,
                           "PlayLength": duration}
-            response = await session.post(f'http://{self.ip}:{self.port}/SendVideoMsg', json=json_param)
-            json_resp = await response.json()
+            async with session.post(f'http://{self.ip}:{self.port}/SendVideoMsg', json=json_param) as resp:
+                json_resp = await resp.json()
 
-            if json_resp.get("Success"):
-                json_param.pop('Base64')
-                json_param.pop('ImageBase64')
-                logger.info("发送视频消息: 对方wxid:{} 时长:{} 视频base64略 图片base64略", wxid, duration)
-                data = json_resp.get("Data")
-                return int(data.get("clientMsgId")), data.get("newMsgId")
-            else:
-                self.error_handler(json_resp)
+        if json_resp.get("Success"):
+            json_param.pop('Base64')
+            json_param.pop('ImageBase64')
+            logger.info("发送视频成功: 对方wxid:{} 时长:{} 视频base64略 图片base64略", wxid, duration)
+            data = json_resp.get("Data")
+            return data.get("clientMsgId"), data.get("newMsgId")
+        else:
+            self.error_handler(json_resp)
 
-    async def send_voice_message(self, wxid: str, voice_base64: str = "", voice_path: str = "", format: str = "amr") -> \
+    async def send_voice_message(self, wxid: str, voice: Union[str, bytes, os.PathLike], format: str = "amr") -> \
             tuple[int, int, int]:
         """发送语音消息。
 
         Args:
             wxid (str): 接收人wxid
-            voice_base64 (str, optional): 语音base64编码，与voice_path二选一. Defaults to "".
-            voice_path (str, optional): 语音文件路径，与voice_base64二选一. Defaults to "".
+            voice (str, bytes, os.PathLike): 语音 接受base64字符串，字节，文件路径
             format (str, optional): 语音格式，支持amr/wav/mp3. Defaults to "amr".
 
         Returns:
@@ -270,55 +281,46 @@ class MessageMixin(WechatAPIClientBase):
             ValueError: voice_path和voice_base64都为空或都不为空时，或format不支持时
             根据error_handler处理错误
         """
-        return await self._queue_message(self._send_voice_message, wxid, voice_base64, voice_path, format)
+        return await self._queue_message(self._send_voice_message, wxid, voice, format)
 
-    async def _send_voice_message(self, wxid: str, voice_base64: str = "", voice_path: str = "", format: str = "amr") -> \
+    async def _send_voice_message(self, wxid: str, voice: Union[str, bytes, os.PathLike], format: str = "amr") -> \
             tuple[int, int, int]:
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
-        elif bool(voice_path) == bool(voice_base64):
-            raise ValueError("Please provide either voice_path or voice_base64")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
         elif format not in ["amr", "wav", "mp3"]:
             raise ValueError("format must be one of amr, wav, mp3")
 
-        duration = 0
-        if format == "amr":
-            if voice_path:
-                with open(voice_path, 'rb') as f:
-                    voice_base64 = base64.b64encode(f.read()).decode()
-                audio = AudioSegment.from_file(voice_path, format="amr")
-                duration = len(audio)
-            elif voice_base64:
-                audio = AudioSegment.from_file(BytesIO(base64.b64decode(voice_base64)), format="amr")
-                duration = len(audio)
-        elif format == "wav":
-            if voice_path:
-                audio = AudioSegment.from_wav(voice_path).set_channels(1).set_frame_rate(16000)
-                duration = len(audio)
-                voice_base64 = base64.b64encode(
-                    await pysilk.async_encode(audio.raw_data, sample_rate=audio.frame_rate)).decode()
-            elif voice_base64:
-                audio = AudioSegment.from_wav(BytesIO(base64.b64decode(voice_base64))).set_channels(1).set_frame_rate(
-                    16000)
-                duration = len(audio)
-                voice_base64 = base64.b64encode(
-                    await pysilk.async_encode(audio.raw_data, sample_rate=audio.frame_rate)).decode()
-        elif format == "mp3":
-            if voice_path:
-                audio = AudioSegment.from_mp3(voice_path).set_channels(1).set_frame_rate(16000)
-                duration = len(audio)
-                voice_base64 = base64.b64encode(
-                    await pysilk.async_encode(audio.raw_data, sample_rate=audio.frame_rate)).decode()
-            elif voice_base64:
-                audio = AudioSegment.from_mp3(BytesIO(base64.b64decode(voice_base64))).set_channels(1).set_frame_rate(
-                    16000)
-                duration = len(audio)
-                voice_base64 = base64.b64encode(
-                    await pysilk.async_encode(audio.raw_data, sample_rate=audio.frame_rate)).decode()
+        # read voice to byte
+        if isinstance(voice, str):
+            voice_byte = base64.b64decode(voice)
+        elif isinstance(voice, bytes):
+            voice_byte = voice
+        elif isinstance(voice, os.PathLike):
+            with open(voice, "rb") as f:
+                voice_byte = f.read()
         else:
-            raise ValueError("Please provide either voice_path or voice_base64")
+            raise ValueError("voice should be str, bytes, or path")
+
+        # get voice duration and b64
+        if format.lower() == "amr":
+            audio = AudioSegment.from_file(BytesIO(voice_byte), format="amr")
+            voice_base64 = base64.b64encode(voice_byte).decode()
+        elif format.lower() == "wav":
+            audio = AudioSegment.from_file(BytesIO(voice_byte), format="wav").set_channels(1)
+            audio = audio.set_frame_rate(self._get_closest_frame_rate(audio.frame_rate))
+            voice_base64 = base64.b64encode(
+                await pysilk.async_encode(audio.raw_data, sample_rate=audio.frame_rate)).decode()
+        elif format.lower() == "mp3":
+            audio = AudioSegment.from_file(BytesIO(voice_byte), format="mp3").set_channels(1)
+            audio = audio.set_frame_rate(self._get_closest_frame_rate(audio.frame_rate))
+            voice_base64 = base64.b64encode(
+                await pysilk.async_encode(audio.raw_data, sample_rate=audio.frame_rate)).decode()
+        else:
+            raise ValueError("format must be one of amr, wav, mp3")
+
+        duration = len(audio)
 
         format_dict = {"amr": 0, "wav": 4, "mp3": 4}
 
@@ -335,6 +337,19 @@ class MessageMixin(WechatAPIClientBase):
                 return int(data.get("ClientMsgId")), data.get("CreateTime"), data.get("NewMsgId")
             else:
                 self.error_handler(json_resp)
+
+    @staticmethod
+    def _get_closest_frame_rate(frame_rate: int) -> int:
+        supported = [8000, 12000, 16000, 24000]
+        closest_rate = None
+        smallest_diff = float('inf')
+        for num in supported:
+            diff = abs(frame_rate - num)
+            if diff < smallest_diff:
+                smallest_diff = diff
+                closest_rate = num
+
+        return closest_rate
 
     async def send_link_message(self, wxid: str, url: str, title: str = "", description: str = "",
                                 thumb_url: str = "") -> tuple[str, int, int]:
@@ -362,7 +377,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Url": url, "Title": title, "Desc": description,
@@ -404,7 +419,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Md5": md5, "TotalLen": total_length}
@@ -442,7 +457,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "CardWxid": card_wxid, "CardAlias": card_alias,
@@ -483,7 +498,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Xml": xml, "Type": type}
@@ -519,7 +534,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Content": xml}
@@ -554,7 +569,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Content": xml}
@@ -589,7 +604,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
         elif not self.ignore_protect and protector.check(14400):
-            raise BanProtection("登录新设备后4小时内请不要操作以避免风控")
+            raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
 
         async with aiohttp.ClientSession() as session:
             json_param = {"Wxid": self.wxid, "ToWxid": wxid, "Content": xml}
@@ -616,7 +631,7 @@ class MessageMixin(WechatAPIClientBase):
         if not self.wxid:
             raise UserLoggedOut("请先登录")
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
             json_param = {"Wxid": self.wxid, "Scene": 0, "Synckey": ""}
             response = await session.post(f'http://{self.ip}:{self.port}/Sync', json=json_param)
             json_resp = await response.json()

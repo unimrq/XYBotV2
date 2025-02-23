@@ -5,7 +5,8 @@ from typing import Dict, Any
 from loguru import logger
 
 from WechatAPI import WechatAPIClient
-from WechatAPI.Client import protector
+from WechatAPI.Client.protect import protector
+from database.messsagDB import MessageDB
 from utils.event_manager import EventManager
 
 
@@ -20,11 +21,14 @@ class XYBot:
         with open("main_config.toml", "rb") as f:
             main_config = tomllib.load(f)
 
+        self.ignore_protection = main_config.get("XYBot", {}).get("ignore-protection", False)
+
         self.ignore_mode = main_config.get("XYBot", {}).get("ignore-mode", "")
         self.whitelist = main_config.get("XYBot", {}).get("whitelist", [])
         self.blacklist = main_config.get("XYBot", {}).get("blacklist", [])
 
-        self.protect_msg_sent = False
+        self.msg_db = MessageDB()
+
 
     def update_profile(self, wxid: str, nickname: str, alias: str, phone: str):
         """更新机器人信息"""
@@ -35,11 +39,6 @@ class XYBot:
 
     async def process_message(self, message: Dict[str, Any]):
         """处理接收到的消息"""
-        if protector.check(14400):
-            if not self.protect_msg_sent:
-                logger.warning("登录新设备后4小时内请不要操作以避免风控")
-                self.protect_msg_sent = True
-            return
 
         msg_type = message.get("MsgType")
 
@@ -74,7 +73,10 @@ class XYBot:
             await self.process_system_message(message)
 
         elif msg_type == 37:  # 好友请求
-            await EventManager.emit("friend_request", self.bot, message)
+            if self.ignore_protection or not protector.check(14400):
+                await EventManager.emit("friend_request", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
         elif msg_type == 51:
             pass
@@ -118,6 +120,16 @@ class XYBot:
             ats = []
         message["Ats"] = ats if ats and ats[0] != "" else []
 
+        # 保存消息到数据库
+        await self.msg_db.save_message(
+            msg_id=int(message["MsgId"]),
+            sender_wxid=message["SenderWxid"],
+            from_wxid=message["FromWxid"],
+            msg_type=int(message["MsgType"]),
+            content=message["Content"],
+            is_group=message["IsGroup"]
+        )
+
         if self.wxid in ats:
             logger.info("收到被@消息: 消息ID:{} 来自:{} 发送人:{} @:{} 内容:{}",
                         message["MsgId"],
@@ -127,7 +139,10 @@ class XYBot:
                         message["Content"])
 
             if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
-                await EventManager.emit("at_message", self.bot, message)
+                if self.ignore_protection or not protector.check(14400):
+                    await EventManager.emit("at_message", self.bot, message)
+                else:
+                    logger.warning("风控保护: 新设备登录后4小时内请挂机")
             return
 
         logger.info("收到文本消息: 消息ID:{} 来自:{} 发送人:{} @:{} 内容:{}",
@@ -138,7 +153,10 @@ class XYBot:
                     message["Content"])
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
-            await EventManager.emit("text_message", self.bot, message)
+            if self.ignore_protection or not protector.check(14400):
+                await EventManager.emit("text_message", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     async def process_image_message(self, message: Dict[str, Any]):
         """处理图片消息"""
@@ -166,6 +184,15 @@ class XYBot:
                     message["SenderWxid"],
                     message["Content"])
 
+        await self.msg_db.save_message(
+            msg_id=int(message["MsgId"]),
+            sender_wxid=message["SenderWxid"],
+            from_wxid=message["FromWxid"],
+            msg_type=int(message["MsgType"]),
+            content=message["MsgSource"],
+            is_group=message["IsGroup"]
+        )
+
         # 解析图片消息
         aeskey, cdnmidimgurl = None, None
         try:
@@ -183,7 +210,10 @@ class XYBot:
             message["Content"] = await self.bot.download_image(aeskey, cdnmidimgurl)
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
-            await EventManager.emit("image_message", self.bot, message)
+            if self.ignore_protection or not protector.check(14400):
+                await EventManager.emit("image_message", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     async def process_voice_message(self, message: Dict[str, Any]):
         """处理语音消息"""
@@ -211,6 +241,15 @@ class XYBot:
                     message["SenderWxid"],
                     message["Content"])
 
+        await self.msg_db.save_message(
+            msg_id=int(message["MsgId"]),
+            sender_wxid=message["SenderWxid"],
+            from_wxid=message["FromWxid"],
+            msg_type=int(message["MsgType"]),
+            content=message["Content"],
+            is_group=message["IsGroup"]
+        )
+
         if message["IsGroup"] or not message.get("ImgBuf", {}).get("buffer", ""):
             # 解析语音消息
             voiceurl, length = None, None
@@ -233,7 +272,10 @@ class XYBot:
             message["Content"] = await self.bot.silk_base64_to_wav_byte(silk_base64)
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
-            await EventManager.emit("voice_message", self.bot, message)
+            if self.ignore_protection or not protector.check(14400):
+                await EventManager.emit("voice_message", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     async def process_xml_message(self, message: Dict[str, Any]):
         """处理xml消息"""
@@ -253,6 +295,15 @@ class XYBot:
             if message["FromWxid"] == self.wxid:  # 自己发的消息
                 message["FromWxid"] = message["ToWxid"]
             message["IsGroup"] = False
+
+        await self.msg_db.save_message(
+            msg_id=int(message["MsgId"]),
+            sender_wxid=message["SenderWxid"],
+            from_wxid=message["FromWxid"],
+            msg_type=int(message["MsgType"]),
+            content=message["Content"],
+            is_group=message["IsGroup"]
+        )
 
         try:
             root = ET.fromstring(message["Content"])
@@ -365,14 +416,17 @@ class XYBot:
         message["Quote"] = quote_messsage
 
         logger.info("收到引用消息: 消息ID:{} 来自:{} 发送人:{}  内容:{} 引用:{}",
-                    message["Msgid"],
+                    message.get("Msgid", ""),
                     message["FromWxid"],
                     message["SenderWxid"],
                     message["Content"],
                     message["Quote"])
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
-            await EventManager.emit("quote_message", self.bot, message)
+            if self.ignore_protection or not protector.check(14400):
+                await EventManager.emit("quote_message", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     async def process_video_message(self, message):
         # 预处理消息
@@ -397,12 +451,24 @@ class XYBot:
                     message["MsgId"],
                     message["FromWxid"],
                     message["SenderWxid"],
-                    message["Content"])
+                    str(message["Content"]).replace("\n", ""))
+
+        await self.msg_db.save_message(
+            msg_id=int(message["MsgId"]),
+            sender_wxid=message["SenderWxid"],
+            from_wxid=message["FromWxid"],
+            msg_type=int(message["MsgType"]),
+            content=message["Content"],
+            is_group=message["IsGroup"]
+        )
 
         message["Video"] = await self.bot.download_video(message["MsgId"])
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
-            await EventManager.emit("video_message", self.bot, message)
+            if self.ignore_protection or not protector.check(14400):
+                await EventManager.emit("video_message", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     async def process_file_message(self, message: Dict[str, Any]):
         """处理文件消息"""
@@ -424,10 +490,22 @@ class XYBot:
                     message["SenderWxid"],
                     message["Content"])
 
+        await self.msg_db.save_message(
+            msg_id=int(message["MsgId"]),
+            sender_wxid=message["SenderWxid"],
+            from_wxid=message["FromWxid"],
+            msg_type=int(message["MsgType"]),
+            content=message["Content"],
+            is_group=message["IsGroup"]
+        )
+
         message["File"] = await self.bot.download_attach(attach_id)
 
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
-            await EventManager.emit("file_message", self.bot, message)
+            if self.ignore_protection or not protector.check(14400):
+                await EventManager.emit("file_message", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     async def process_system_message(self, message: Dict[str, Any]):
         """处理系统消息"""
@@ -461,7 +539,12 @@ class XYBot:
         elif msg_type == "ClientCheckGetExtInfo":
             pass
         else:
-            logger.info("未知的系统消息类型: {}", message)
+            logger.info("收到系统消息: {}", message)
+            if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
+                if self.ignore_protection or not protector.check(14400):
+                    await EventManager.emit("system_message", self.bot, message)
+                else:
+                    logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     async def process_pat_message(self, message: Dict[str, Any]):
         """处理拍一拍请求消息"""
@@ -487,8 +570,20 @@ class XYBot:
                     message["Patted"],
                     message["PatSuffix"])
 
+        await self.msg_db.save_message(
+            msg_id=int(message["MsgId"]),
+            sender_wxid=message["SenderWxid"],
+            from_wxid=message["FromWxid"],
+            msg_type=int(message["MsgType"]),
+            content=f"{message['Patter']} 拍了拍 {message['Patted']} {message['PatSuffix']}",
+            is_group=message["IsGroup"]
+        )
+
         if self.ignore_check(message["FromWxid"], message["SenderWxid"]):
-            await EventManager.emit("pat_message", self.bot, message)
+            if self.ignore_protection or not protector.check(14400):
+                await EventManager.emit("pat_message", self.bot, message)
+            else:
+                logger.warning("风控保护: 新设备登录后4小时内请挂机")
 
     def ignore_check(self, FromWxid: str, SenderWxid: str):
         if self.ignore_mode == "Whitelist":
